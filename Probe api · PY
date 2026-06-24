@@ -1,0 +1,74 @@
+"""
+probe_api.py — запусти это чтобы найти правильные эндпоинты tenderplan
+python probe_api.py
+"""
+
+import httpx
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+API_KEY = os.getenv("TENDERPLAN_API_KEY", "")
+BASE    = "https://tenderplan.ru"
+
+HEADERS = {
+    "Authorization": f"Bearer {API_KEY}",
+    "Accept":        "application/json",
+    "Content-Type":  "application/json",
+}
+
+PATHS_GET = [
+    "/api/v1/tenders",
+    "/api/v2/tenders",
+    "/api/v1/lots",
+    "/api/v1/purchases",
+    "/api/v1/search",
+    "/api/v1/regions",
+    "/api/v2/regions",
+    "/v1/tenders",
+    "/v1/lots",
+]
+
+PATHS_POST = [
+    "/api/v1/tenders/search",
+    "/api/v2/tenders/search",
+    "/api/v1/search/tenders",
+    "/api/v1/search",
+    "/api/v2/search",
+]
+
+print(f"\n=== Probe tenderplan.ru API ===")
+print(f"Key: {API_KEY[:15]}...\n")
+
+print("── GET запросы ──")
+for path in PATHS_GET:
+    try:
+        r = httpx.get(f"{BASE}{path}", headers=HEADERS, timeout=6, params={"per_page": 1})
+        icon = "✅" if r.status_code not in (404, 405) else "❌"
+        print(f"  {icon} GET {path} → {r.status_code}")
+        if r.status_code not in (404, 405):
+            print(f"     Ответ: {r.text[:200]}\n")
+    except Exception as e:
+        print(f"  ⚠️  GET {path} → {e}")
+
+print("\n── POST запросы ──")
+for path in PATHS_POST:
+    try:
+        r = httpx.post(f"{BASE}{path}", headers=HEADERS, json={"per_page": 1}, timeout=6)
+        icon = "✅" if r.status_code not in (404, 405) else "❌"
+        print(f"  {icon} POST {path} → {r.status_code}")
+        if r.status_code not in (404, 405):
+            print(f"     Ответ: {r.text[:200]}\n")
+    except Exception as e:
+        print(f"  ⚠️  POST {path} → {e}")
+
+print("\n── Проверяю авторизацию (без Bearer) ──")
+try:
+    r = httpx.get(f"{BASE}/api/v1/tenders",
+                  headers={"X-API-KEY": API_KEY, "Accept": "application/json"},
+                  timeout=6, params={"per_page": 1})
+    print(f"  X-API-KEY header → {r.status_code}: {r.text[:200]}")
+except Exception as e:
+    print(f"  ⚠️ {e}")
+
+print("\nГотово. Пришли вывод — найдём правильный эндпоинт.")
