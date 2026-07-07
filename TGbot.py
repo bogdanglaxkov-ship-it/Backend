@@ -391,15 +391,10 @@ def _send_results(uid: int, tenders: list, s: UserState):
 
 
 def _send_demo(uid: int, s: UserState):
-    kw = s.filters.get("keyword") or "оборудование"
-    r  = s.filters.get("region")  or "Астана"
     bot.send_message(uid,
-        f"📋 *Демо-результаты* (нет данных в БД)\n\n"
-        f"1. *Поставка {kw}*\n   📍 {r} | 💰 1 250 000 ₸\n\n"
-        f"2. *Разработка ПО — {kw}*\n   📍 {r} | 💰 4 500 000 ₸\n\n"
-        f"3. *Услуги: {kw}*\n   📍 {r} | 💰 890 000 ₸\n\n"
-        f"_Добавь реальные тендеры в базу через main.py_",
-        parse_mode="Markdown", reply_markup=kb_main(s)
+        "😕 По вашим фильтрам сейчас ничего не найдено.\n"
+        "Попробуйте изменить регион, цену или ключевое слово.",
+        reply_markup=kb_main(s)
     )
 
 # ─────────────────────────────────────────────────────────

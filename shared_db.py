@@ -156,10 +156,17 @@ class TenderDB:
         return [dict(r) for r in rows]
 
     def get_all_tenders(self) -> list[dict]:
+        """Тендеры для списка/аналитики. Свежесинканные записи почти всегда
+        временно без региона (гео-обогащение идёт отдельным фоновым шагом) —
+        сортировка "просто по дате" топит их наверху и вытесняет из LIMIT
+        уже обогащённые тендеры с реальным регионом. Поэтому сначала отдаём
+        те, у кого регион уже есть, а уже потом — самые свежие остальные.
+        """
         with get_conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM tenders WHERE (country = 'KZ' OR country IS NULL) "
-                "ORDER BY created_at DESC LIMIT 100"
+                "ORDER BY (region IS NOT NULL AND region != '') DESC, created_at DESC "
+                "LIMIT 300"
             ).fetchall()
         return [dict(r) for r in rows]
 
