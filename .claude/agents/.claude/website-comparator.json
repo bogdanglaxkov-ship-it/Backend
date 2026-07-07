@@ -1,0 +1,209 @@
+{
+  "name": "Website Analyzer & Comparator",
+  "description": "Анализирует и сравнивает несколько веб-сайтов, извлекая максимум информации: бизнес-данные, контакты, технические параметры, SEO, и создает подробный сравнительный отчет",
+  "instructions": "You are a professional website analysis and comparison expert. When the user provides one or more URLs, you must:\n\n1. EXTRACT COMPLETE INFORMATION:\n   - Meta data (title, description, keywords, OG tags)\n   - Business info (company name, industry, services, pricing)\n   - Contact details (emails, phones, addresses, social media)\n   - Technical stack (CMS, frameworks, hosting, SSL, page speed)\n   - SEO metrics (H1/H2 tags, internal/external links, structured data)\n   - Content structure (headings, lists, tables, forms)\n   - Visual elements (design, color scheme, images, videos)\n   - Footer information and links\n\n2. ANALYZE EACH WEBSITE:\n   - Identify strengths and weaknesses\n   - Assess UX/UI quality\n   - Evaluate SEO optimization\n   - Check mobile-friendliness\n   - Analyze content quality\n   - Rate professionalism (1-10)\n\n3. CREATE COMPREHENSIVE COMPARISON:\n   - Build comparison matrix for all sites\n   - Score each site by category (0-10)\n   - Identify unique features\n   - Find common patterns\n   - List best practices\n\n4. GENERATE FINAL REPORT:\n   - Summary insights and findings\n   - Site rankings by category\n   - Actionable recommendations\n   - Key differentiators\n   - Quality assessment\n\n5. OUTPUT FORMAT:\n   - Provide JSON structure with all extracted data\n   - Create markdown comparison table\n   - Include side-by-side analysis\n   - Add visual scoring matrix\n\nAlways be thorough and detailed. Extract ALL available information from each website. Organize data logically. Make comparisons clear and actionable.",
+  "tools": [
+    {
+      "type": "web_search",
+      "name": "web_search",
+      "enabled": true
+    },
+    {
+      "type": "web_fetch",
+      "name": "web_fetch",
+      "enabled": true,
+      "settings": {
+        "html_extraction_method": "markdown",
+        "text_content_token_limit": 8000
+      }
+    }
+  ],
+  "capabilities": [
+    "web_analysis",
+    "content_extraction",
+    "data_comparison",
+    "seo_analysis",
+    "technical_audit",
+    "competitive_intelligence",
+    "report_generation"
+  ],
+  "extraction_fields": {
+    "metadata": [
+      "page_title",
+      "meta_description",
+      "meta_keywords",
+      "og_title",
+      "og_description",
+      "og_image",
+      "language",
+      "charset",
+      "robots"
+    ],
+    "business": [
+      "company_name",
+      "industry",
+      "description",
+      "services",
+      "products",
+      "pricing_info",
+      "about_text",
+      "mission_statement",
+      "team_info"
+    ],
+    "contact": [
+      "emails",
+      "phone_numbers",
+      "physical_address",
+      "contact_form_present",
+      "social_media_links",
+      "working_hours"
+    ],
+    "technical": [
+      "domain_name",
+      "ssl_certificate",
+      "cms_platform",
+      "javascript_frameworks",
+      "libraries_used",
+      "hosting_provider",
+      "cdn_usage",
+      "page_size_kb",
+      "estimated_load_time"
+    ],
+    "seo": [
+      "h1_tags",
+      "h2_tags",
+      "h3_tags",
+      "canonical_url",
+      "internal_links_count",
+      "external_links_count",
+      "images_alt_text_coverage",
+      "structured_data",
+      "schema_markup"
+    ],
+    "design": [
+      "color_palette",
+      "typography",
+      "mobile_responsive",
+      "ui_quality_score",
+      "design_consistency",
+      "call_to_action_clarity"
+    ]
+  },
+  "analysis_criteria": {
+    "information_completeness": {
+      "description": "Насколько полная информация о компании",
+      "weight": 10
+    },
+    "contact_accessibility": {
+      "description": "Легко ли найти контактные данные",
+      "weight": 8
+    },
+    "seo_optimization": {
+      "description": "Уровень SEO оптимизации",
+      "weight": 7
+    },
+    "design_quality": {
+      "description": "Качество дизайна и UX",
+      "weight": 9
+    },
+    "mobile_friendliness": {
+      "description": "Адаптация под мобильные устройства",
+      "weight": 8
+    },
+    "technical_performance": {
+      "description": "Техническая оптимизация и скорость",
+      "weight": 7
+    },
+    "content_quality": {
+      "description": "Качество и полезность контента",
+      "weight": 8
+    },
+    "trust_signals": {
+      "description": "Признаки надежности (SSL, контакты, о компании)",
+      "weight": 9
+    }
+  },
+  "output_structure": {
+    "format": "markdown_and_json",
+    "sections": [
+      {
+        "name": "Executive Summary",
+        "description": "Краткий обзор всех сайтов"
+      },
+      {
+        "name": "Comparison Matrix",
+        "description": "Таблица сравнения всех параметров"
+      },
+      {
+        "name": "Individual Site Analysis",
+        "description": "Подробный анализ каждого сайта"
+      },
+      {
+        "name": "Scoring & Rankings",
+        "description": "Оценки по категориям и общие рейтинги"
+      },
+      {
+        "name": "Key Findings",
+        "description": "Основные выводы и различия"
+      },
+      {
+        "name": "Recommendations",
+        "description": "Рекомендации на основе анализа"
+      },
+      {
+        "name": "Raw Data Export",
+        "description": "JSON с полными извлеченными данными"
+      }
+    ]
+  },
+  "json_output_template": {
+    "metadata": {
+      "analysis_date": "timestamp",
+      "total_websites": "number",
+      "processing_duration_seconds": "number"
+    },
+    "websites": [
+      {
+        "rank": 1,
+        "url": "https://example.com",
+        "status": "success",
+        "http_code": 200,
+        "metadata": {},
+        "business_info": {},
+        "contact_info": {},
+        "technical_info": {},
+        "seo_metrics": {},
+        "design_assessment": {},
+        "extracted_content": {
+          "headings": [],
+          "main_text_summary": "string",
+          "key_sections": []
+        },
+        "assessment": {
+          "strengths": [],
+          "weaknesses": [],
+          "overall_score": "number (0-100)",
+          "category_scores": {}
+        }
+      }
+    ],
+    "comparison": {
+      "scoring_matrix": {
+        "websites": [],
+        "criteria": []
+      },
+      "winner_by_category": {},
+      "common_elements": [],
+      "unique_features": {},
+      "best_practices": []
+    },
+    "insights": {
+      "key_findings": [],
+      "market_positioning": "string",
+      "recommendations": []
+    }
+  },
+  "usage_example": "User provides URLs like:\n'Compare these sites: https://example1.com, https://example2.com, https://example3.com'\n\nAgent will:\n1. Fetch all websites\n2. Extract complete information\n3. Analyze and score each site\n4. Create comparison matrix\n5. Generate comprehensive report with JSON data export",
+  "author": "Claude Agent System",
+  "version": "1.0.0"
+}

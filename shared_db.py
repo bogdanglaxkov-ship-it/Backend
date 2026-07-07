@@ -48,8 +48,26 @@ class TenderDB:
                     keyword     TEXT,
                     status      TEXT DEFAULT 'active',
                     created_at  TEXT DEFAULT (datetime('now')),
-                    url         TEXT
+                    url         TEXT,
+                    country     TEXT DEFAULT 'KZ'
                 );
+
+                -- Добавляем колонку country если её нет (миграция для старых БД)
+                CREATE TABLE IF NOT EXISTS _migration_done (id INTEGER PRIMARY KEY);
+            """)
+            # Миграция: добавляем country в существующую БД если колонки нет
+            try:
+                conn.execute("ALTER TABLE tenders ADD COLUMN country TEXT DEFAULT 'KZ'")
+            except Exception:
+                pass  # Колонка уже существует
+            # Миграция: geo_checked отделяет "ещё не проверяли гео" от "проверили,
+            # региона нет" (пустой region сам по себе не годится как маркер,
+            # т.к. у российских тендеров region легитимно всегда пустой)
+            try:
+                conn.execute("ALTER TABLE tenders ADD COLUMN geo_checked INTEGER DEFAULT 0")
+            except Exception:
+                pass  # Колонка уже существует
+            conn.executescript("""
 
                 CREATE TABLE IF NOT EXISTS subscriptions (
                     user_id             INTEGER PRIMARY KEY,
@@ -63,22 +81,36 @@ class TenderDB:
     # ── ТЕНДЕРЫ ──────────────────────────────────────────
 
     def add_tender(self, tender: dict) -> bool:
-        """Добавить тендер. Вызывается из main.py при получении данных."""
+        """Добавить/обновить тендер. Вызывается из main.py и из синка при получении данных.
+        Upsert: при повторной синхронизации того же id подтягиваем исправленные/дозаполненные
+        поля (например price), не затирая уже известные значения пустыми/отсутствующими.
+        """
+        price = tender.get("price")
+        if price is None:
+            price = tender.get("amount")
         try:
             with get_conn() as conn:
                 conn.execute("""
-                    INSERT OR IGNORE INTO tenders
-                        (id, title, price, region, district, keyword, status, url)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO tenders
+                        (id, title, price, region, district, keyword, status, url, country)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        title    = excluded.title,
+                        price    = COALESCE(excluded.price, tenders.price),
+                        region   = CASE WHEN excluded.region   IS NOT NULL AND excluded.region   != '' THEN excluded.region   ELSE tenders.region   END,
+                        district = CASE WHEN excluded.district IS NOT NULL AND excluded.district != '' THEN excluded.district ELSE tenders.district END,
+                        status   = excluded.status,
+                        url      = COALESCE(excluded.url, tenders.url)
                 """, (
                     tender.get("id"),
                     tender.get("title"),
-                    tender.get("price") or tender.get("amount"),
+                    price,
                     tender.get("region"),
                     tender.get("district"),
                     tender.get("keyword"),
                     tender.get("status", "active"),
                     tender.get("url"),
+                    tender.get("country", "KZ"),
                 ))
             return True
         except Exception as e:
@@ -86,8 +118,11 @@ class TenderDB:
             return False
 
     def search_tenders(self, filters: dict) -> list[dict]:
-        """Поиск тендеров по фильтрам. Используется в боте и в /api/tenders/search."""
-        conditions = ["1=1"]
+        """Поиск тендеров по фильтрам. Используется в боте и в /api/tenders/search.
+        Базово всегда фильтрует только Казахстан (country = 'KZ').
+        """
+        # Базовый фильтр — только КЗ тендеры
+        conditions = ["(country = 'KZ' OR country IS NULL)"]
         params = []
 
         if filters.get("region"):
@@ -123,7 +158,47 @@ class TenderDB:
     def get_all_tenders(self) -> list[dict]:
         with get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM tenders ORDER BY created_at DESC LIMIT 100"
+                "SELECT * FROM tenders WHERE (country = 'KZ' OR country IS NULL) "
+                "ORDER BY created_at DESC LIMIT 100"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_tenders_missing_region(self, limit: int = 80) -> list[str]:
+        """ID тендеров, которые ещё не проверяли на реальный регион/страну.
+        Пустой region НЕ значит "не проверяли" — у подтверждённых российских
+        тендеров региона нет и не будет, поэтому маркером служит geo_checked.
+        """
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id FROM tenders WHERE geo_checked = 0 OR geo_checked IS NULL LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [r["id"] for r in rows]
+
+    def update_geo(self, tender_id: str, region: str, country: str) -> None:
+        """Обновляет регион и фактическую страну тендера по данным полной модели
+        и отмечает его как проверенный, чтобы enrich не гонял его повторно."""
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE tenders SET region = ?, country = ?, geo_checked = 1 WHERE id = ?",
+                (region, country, tender_id),
+            )
+
+    def get_tender_by_id(self, tender_id: str) -> dict | None:
+        """Один тендер по id — для карточки деталей на сайте."""
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM tenders WHERE id = ?", (tender_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_tenders_by_district(self, district: str) -> list[dict]:
+        """Тендеры конкретного района — для клика по карте в AnalyticsDashboard."""
+        with get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tenders WHERE district = ? AND (country = 'KZ' OR country IS NULL) "
+                "ORDER BY created_at DESC",
+                (district,)
             ).fetchall()
         return [dict(r) for r in rows]
 

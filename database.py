@@ -17,14 +17,6 @@ AsyncSessionLocal = sessionmaker(
 class Base(DeclarativeBase):
     pass
 
-class Message(Base):
-    __tablename__ = "messages"
-    
-    id = Column(Integer, primary_key=True)
-    session_id = Column(String, index=True)
-    role = Column(String)  # "user" или "assistant"
-    content = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
 
 async def get_db():
     async with AsyncSessionLocal() as session:

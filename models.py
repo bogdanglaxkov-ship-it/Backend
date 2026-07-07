@@ -2,7 +2,9 @@
 models.py — SQLAlchemy модели
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, func, Index
+import uuid
+
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, func, Index
 from database import Base
 
 
@@ -35,5 +37,48 @@ class Message(Base):
             "session_id": self.session_id,
             "role": self.role,
             "content": self.content,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class User(Base):
+    """Таблица пользователей (регистрация, вход, подтверждение email, сброс пароля)"""
+
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    name = Column(String(100), nullable=False)
+    password = Column(String(255), nullable=False)  # bcrypt-хеш, никогда не хранится в открытом виде
+
+    email_verified = Column(Boolean, default=False, nullable=False)
+
+    verification_token_hash = Column(String(64), nullable=True, index=True)
+    verification_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    reset_token_hash = Column(String(64), nullable=True, index=True)
+    reset_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    def __repr__(self):
+        return f"<User(id={self.id}, email={self.email})>"
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "email": self.email,
+            "name": self.name,
+            "email_verified": self.email_verified,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
