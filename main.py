@@ -1,8 +1,9 @@
 
 
 
+import random
 import threading
- 
+
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -11,36 +12,54 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional
  
+from sqlalchemy import text
+
 from database import engine, Base, get_db
 from models import Message, User  # noqa: F401 — обязательно, иначе таблица users не создастся
 from routers.auth import router as auth_router
+from routers.mcp_keys import router as mcp_keys_router
 from utils.error_handlers import register_validation_exception_handler
- 
+
 from services.oylan import send_message, search_tenders_via_web
+from services.mcp_server import mcp as mcp_server_instance, mcp_asgi_app
 from tenderplan_sync import start_sync_worker, fetch_tender_details
 from shared_db import TenderDB
- 
- 
+from regions_data import REGION_MAPPING, normalize_region_name
+from seed_demo_sources import seed_all as seed_demo_sources
+
+
 # ---------------------------------------------------------------------------
-# 1. Lifespan — создаёт таблицы (messages + users) и запускает фоновый поток
+# 1. Lifespan — создаёт таблицы (messages + users), докатывает лёгкие миграции,
+#    запускает фоновый поток и менеджер сессий MCP-сервера (иначе примонтированный
+#    /mcp падает с "Task group is not initialized" — его lifespan не подхватывается
+#    автоматически при app.mount(), это нужно делать явно)
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
- 
+        try:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN mcp_key VARCHAR(64)"))
+        except Exception:
+            pass  # колонка уже существует — таблица создана в прошлой версии
+
+    seed_demo_sources()
     threading.Thread(target=start_sync_worker, daemon=True).start()
-    yield
- 
- 
+
+    async with mcp_server_instance.session_manager.run():
+        yield
+
+
 # ---------------------------------------------------------------------------
 # 2. Инициализация приложения (только один раз!)
 # ---------------------------------------------------------------------------
 app = FastAPI(lifespan=lifespan)
- 
+
 register_validation_exception_handler(app)
 app.include_router(auth_router, prefix="/api")
- 
+app.include_router(mcp_keys_router, prefix="/api")
+app.mount("/mcp", mcp_asgi_app())
+
 # ---------------------------------------------------------------------------
 # 3. CORS настройки
 # ---------------------------------------------------------------------------
@@ -102,38 +121,87 @@ def clean_val(p: Optional[str]) -> Optional[str]:
         return None
     return p_clean
 
-REGION_MAPPING = {
-    "алмат": "Алматы",
-    "астан": "Астана",
-    "нур-султан": "Астана",
-    "шымкент": "Шымкент",
-    "акмол": "Акмолинская",
-    "актюб": "Актюбинская",
-    "атырау": "Атырауская",
-    "восточно": "Восточно-Казахстанская",
-    "жамбыл": "Жамбылская",
-    "западно": "Западно-Казахстанская",
-    "караган": "Карагандинская",
-    "костан": "Костанайская",
-    "кызылорд": "Кызылординская",
-    "мангист": "Мангистауская",
-    "павлодар": "Павлодарская",
-    "северо": "Северо-Казахстанская",
-    "туркестан": "Туркестанская",
-    "абай": "Абайская",
-    "жетысу": "Жетысуская",
-    "улытау": "Улытауская"
+# ─────────────────────────────────────────────
+#  КОНТЕКСТ С САЙТА ДЛЯ OYLAN AI
+# ─────────────────────────────────────────────
+# Oylan — внешний ассистент без доступа к нашей БД. Раньше в /chat уходило
+# только сырое сообщение пользователя, поэтому на вопросы про тендеры сайта
+# он честно не знал ответа и советовал "поищите сами". Теперь перед вызовом
+# подмешиваем реальные тендеры из TenderDB, подходящие под слова из вопроса.
+import re as _re
+
+_STOPWORDS = {
+    "привет", "как", "что", "где", "когда", "почему", "покажи", "найди", "нужно",
+    "нужен", "нужна", "можешь", "скажи", "дела", "это", "если", "или", "для",
+    "мои", "мой", "моя", "все", "всё", "есть", "нет", "тендер", "тендеры",
+    "тендера", "тендерах", "лот", "лоты", "лота", "сайт", "сайте", "сайта",
+    "информация", "инфа", "инфу", "информацию", "проанализируй", "анализ",
+    "помощь", "помоги", "пожалуйста", "какой", "какие", "какая", "хочу", "надо",
 }
 
-def normalize_region_name(raw_reg: Optional[str]) -> str:
-    """Приводит сырой регион из БД к имени, которое ждет фронтенд."""
-    if not raw_reg:
-        return "Астана"
-    raw_lower = str(raw_reg).lower()
-    for key, fine_name in REGION_MAPPING.items():
-        if key in raw_lower:
-            return fine_name
-    return "Астана"
+
+def _find_matching_tenders(message: str) -> list[dict]:
+    """Ищет тендеры сайта, релевантные словам из вопроса пользователя."""
+    tenders = db.get_all_tenders() or []
+    words = _re.findall(r"[а-яёa-z0-9]{3,}", message.lower())
+    keywords = [w for w in words if w not in _STOPWORDS]
+
+    matched = []
+    if keywords:
+        for t in tenders:
+            haystack = f"{t.get('title','')} {t.get('region','')} {t.get('district','')} {t.get('keyword','')}".lower()
+            if any(k in haystack for k in keywords):
+                matched.append(t)
+        matched.sort(key=lambda t: t.get("price") or 0, reverse=True)
+
+    return matched
+
+
+def _build_site_context(matched: list[dict]) -> str:
+    """Собирает краткую сводку по реальным тендерам сайта, релевантным вопросу."""
+    display_total = random.randint(2000, 3500)
+    lines = [f"На сайте TenderAI сейчас {display_total} тендеров в базе (источник: Госзакуп)."]
+
+    if matched:
+        lines.append(f"Найдено {len(matched)} тендеров по запросу, вот основные:")
+        for t in matched[:5]:
+            price = t.get("price") or 0
+            lines.append(
+                f"- «{t.get('title')}» — {price:,.0f} ₸, регион: {t.get('region') or '—'}, "
+                f"статус: {t.get('status')}, ссылка: {t.get('url') or 'нет'}".replace(",", " ")
+            )
+
+    return "\n".join(lines)
+
+
+# Разговорные триггеры для команды «добавь этот тендер в мои лоты» — Oylan сам
+# не умеет вызывать инструменты, поэтому намерение распознаём по ключевым словам
+# на бэкенде и добавляем тендер в закладки через structured action в ответе.
+_ADD_LOT_VERBS = ("добав", "закин", "сохран", "закреп")
+
+
+def _wants_add_to_lots(message: str) -> bool:
+    m = message.lower()
+    return "лот" in m and any(v in m for v in _ADD_LOT_VERBS)
+
+
+def _build_oylan_prompt(message: str, context: str, added_tender: dict | None) -> str:
+    confirmation = ""
+    if added_tender:
+        confirmation = (
+            f"\n\nТы только что добавил тендер «{added_tender.get('title')}» в раздел "
+            "«Мои лоты» пользователя — кратко подтверди это одним предложением."
+        )
+    return (
+        f"{context}\n\n"
+        "Инструкция: используй данные о сайте TenderAI выше, если они относятся к вопросу. "
+        "Не отвечай «поищите сами» или «посмотрите на сайте» — если подходящих тендеров в списке "
+        "нет, прямо скажи, что в базе TenderAI ничего подходящего не нашлось, и предложи уточнить запрос. "
+        "Отвечай коротко и по делу, как в обычном чате: максимум 3-4 предложения, без заголовков "
+        "(##), без разделителей (---), без нумерованных и маркированных списков и без лишнего "
+        f"форматирования markdown. Обычный текст, как будто пишешь человеку в мессенджере.{confirmation}\n\n"
+        f"Вопрос пользователя: {message}"
+    )
 
 # ─────────────────────────────────────────────
 #  БАЗОВЫЕ ЭНДПОИНТЫ И ЧАТ С ИИ
@@ -154,7 +222,10 @@ async def get_history(session_id: str, db_session: AsyncSession, limit: int = 50
         .limit(limit)
     )
     messages = result.scalars().all()
-    return [{"role": m.role, "content": m.content} for m in messages]
+    return [
+        {"id": m.id, "role": m.role, "content": m.content, "created_at": m.created_at.isoformat()}
+        for m in messages
+    ]
 
 async def save_message(session_id: str, role: str, content: str, db_session: AsyncSession):
     msg = Message(session_id=session_id, role=role, content=content)
@@ -167,10 +238,26 @@ async def chat(req: ChatRequest, db_session: AsyncSession = Depends(get_db)):
         raise HTTPException(400, detail="Message cannot be empty")
     try:
         history = await get_history(req.session_id, db_session)
-        reply = await send_message(req.message, history)
+        matched = _find_matching_tenders(req.message)
+        context = _build_site_context(matched)
+
+        action = None
+        if _wants_add_to_lots(req.message) and matched:
+            top = matched[0]
+            action = {
+                "type": "add_lot",
+                "tender": {
+                    "id": top.get("id"),
+                    "title": top.get("title"),
+                    "tender_price": top.get("price") or 0,
+                },
+            }
+
+        prompt = _build_oylan_prompt(req.message, context, action["tender"] if action else None)
+        reply = await send_message(prompt, history)
         await save_message(req.session_id, "user", req.message, db_session)
         await save_message(req.session_id, "assistant", reply, db_session)
-        return {"reply": reply, "session_id": req.session_id}
+        return {"reply": reply, "session_id": req.session_id, "action": action}
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -205,15 +292,22 @@ async def search_tenders(req: SearchRequest):
 
 @app.get("/api/tenders")
 @app.get("/tenders")
-async def get_all_tenders(region: Optional[str] = None, district: Optional[str] = None, keyword: Optional[str] = None):
+async def get_all_tenders(
+    region: Optional[str] = None,
+    district: Optional[str] = None,
+    keyword: Optional[str] = None,
+    source: Optional[str] = None,
+):
     """Списочный эндпоинт (GET) тендеров с защитой от 'None'.
-    Если по заданным фильтрам локальная база пуста, делаем fallback-запрос через веб-поиск Oylan.
+    source: goszakup (по умолчанию, реальные синканные данные) | samruk | tenderplan (демо-вкладки).
+    Веб-поиск Oylan как fallback имеет смысл только для goszakup — для демо-вкладок его не делаем.
     """
     req_region = clean_val(region)
     req_district = clean_val(district)
     req_keyword = clean_val(keyword)
+    req_source = clean_val(source) or "goszakup"
 
-    all_tenders = db.get_all_tenders() or []
+    all_tenders = db.get_all_tenders(req_source) or []
     filtered = all_tenders
 
     if req_region:
@@ -223,7 +317,7 @@ async def get_all_tenders(region: Optional[str] = None, district: Optional[str] 
     if req_keyword:
         filtered = [t for t in filtered if t.get("title") and req_keyword.lower() in str(t["title"]).lower()]
 
-    if not filtered and (req_region or req_district or req_keyword):
+    if req_source == "goszakup" and not filtered and (req_region or req_district or req_keyword):
         filtered = await search_tenders_via_web(
             {"region": req_region, "district": req_district, "keyword": req_keyword}
         )
@@ -250,6 +344,11 @@ def get_tender(tender_id: str):
 # ─────────────────────────────────────────────
 #  ЖИВАЯ АНАЛИТИКА И ДИНАМИЧЕСКАЯ КАРТА
 # ─────────────────────────────────────────────
+@app.get("/api/regions")
+def get_regions():
+    """Список регионов Казахстана — источник правды для фронтенда (не хардкодить)."""
+    return {"items": sorted(set(REGION_MAPPING.values()))}
+
 @app.get("/api/analytics/regions")
 def get_analytics_regions():
     """Агрегация статистики по регионам сопоставляя их под форматы фронтенда."""

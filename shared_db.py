@@ -67,6 +67,12 @@ class TenderDB:
                 conn.execute("ALTER TABLE tenders ADD COLUMN geo_checked INTEGER DEFAULT 0")
             except Exception:
                 pass  # Колонка уже существует
+            # Миграция: source различает вкладки на фронтенде (Госзакуп/Самрук/TenderPlan.Kz).
+            # Существующие записи (реальный синк с tenderplan.ru) остаются 'goszakup'.
+            try:
+                conn.execute("ALTER TABLE tenders ADD COLUMN source TEXT DEFAULT 'goszakup'")
+            except Exception:
+                pass  # Колонка уже существует
             conn.executescript("""
 
                 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -92,8 +98,8 @@ class TenderDB:
             with get_conn() as conn:
                 conn.execute("""
                     INSERT INTO tenders
-                        (id, title, price, region, district, keyword, status, url, country)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (id, title, price, region, district, keyword, status, url, country, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         title    = excluded.title,
                         price    = COALESCE(excluded.price, tenders.price),
@@ -111,6 +117,7 @@ class TenderDB:
                     tender.get("status", "active"),
                     tender.get("url"),
                     tender.get("country", "KZ"),
+                    tender.get("source", "goszakup"),
                 ))
             return True
         except Exception as e:
@@ -155,20 +162,34 @@ class TenderDB:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
-    def get_all_tenders(self) -> list[dict]:
+    def get_all_tenders(self, source: str | None = None) -> list[dict]:
         """Тендеры для списка/аналитики. Свежесинканные записи почти всегда
         временно без региона (гео-обогащение идёт отдельным фоновым шагом) —
         сортировка "просто по дате" топит их наверху и вытесняет из LIMIT
         уже обогащённые тендеры с реальным регионом. Поэтому сначала отдаём
         те, у кого регион уже есть, а уже потом — самые свежие остальные.
+
+        source: фильтр по вкладке (goszakup/samruk/tenderplan). По умолчанию
+        (None) — 'goszakup', чтобы существующие вызовы (аналитика, чат, дашборд)
+        не смешивали в себе демо-данные новых вкладок.
         """
         with get_conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM tenders WHERE (country = 'KZ' OR country IS NULL) "
+                "AND COALESCE(source, 'goszakup') = ? "
                 "ORDER BY (region IS NOT NULL AND region != '') DESC, created_at DESC "
-                "LIMIT 300"
+                "LIMIT 300",
+                (source or "goszakup",),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def count_tenders_by_source(self, source: str) -> int:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM tenders WHERE COALESCE(source, 'goszakup') = ?",
+                (source,),
+            ).fetchone()
+        return row["c"] if row else 0
 
     def get_tenders_missing_region(self, limit: int = 80) -> list[str]:
         """ID тендеров, которые ещё не проверяли на реальный регион/страну.

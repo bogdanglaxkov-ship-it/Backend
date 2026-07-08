@@ -59,6 +59,9 @@ class User(Base):
     reset_token_hash = Column(String(64), nullable=True, index=True)
     reset_token_expires_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Персональный ключ для MCP-коннекторов (Claude/ChatGPT/Cursor) — "mck_..."
+    mcp_key = Column(String(64), unique=True, nullable=True, index=True)
+
     created_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
