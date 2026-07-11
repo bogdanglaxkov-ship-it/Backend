@@ -3,6 +3,7 @@ models.py — SQLAlchemy модели
 """
 
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, func, Index
 from database import Base
@@ -19,11 +20,12 @@ class Message(Base):
     content = Column(Text, nullable=False)
     created_at = Column(
         DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
         server_default=func.now(),
         nullable=False,
         index=True
     )
-    
+
     __table_args__ = (
         Index("idx_session_created", "session_id", "created_at"),
     )

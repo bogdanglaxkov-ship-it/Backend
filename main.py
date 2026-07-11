@@ -223,7 +223,7 @@ async def get_history(session_id: str, db_session: AsyncSession, limit: int = 50
     )
     messages = result.scalars().all()
     return [
-        {"id": m.id, "role": m.role, "content": m.content, "created_at": m.created_at.isoformat()}
+        {"id": m.id, "role": m.role, "content": m.content, "created_at": m.created_at.isoformat() if m.created_at else None}
         for m in messages
     ]
 
