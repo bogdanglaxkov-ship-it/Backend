@@ -33,3 +33,44 @@ class TenderSearchResponse(BaseModel):
     total_count: int
     items: list[TenderOut] = Field(default_factory=list)
     results: list[TenderOut] = Field(default_factory=list)
+
+
+class LotDocument(BaseModel):
+    """Документ лота — демо-данные (в БД документы пока не хранятся)."""
+
+    id: str
+    name: str
+    description: str
+
+
+class LotDetail(BaseModel):
+    """Богатая карточка лота для страницы /tenders/{id}.
+    Реальные поля (id/title/price/region/status/url) берутся из TenderDB,
+    остальное — детерминированно сгенерированные демо-данные (сид = tender id),
+    поэтому одна и та же карточка выглядит одинаково при каждом заходе.
+    """
+
+    id: str
+    title: str
+    description: str
+    lot_number: str
+    type: str
+    category: str
+    subcategory: str
+    customer: str
+    customer_rating: int
+    region: Optional[str] = None
+    deadline_text: str
+    status_label: str
+    purchase_method: str
+    trade_type: str
+    amount: float
+    quantity: int
+    price_per_unit: float
+    margin_percent: float
+    profit: float
+    competition: int
+    dumping_percent: float
+    source_url: Optional[str] = None
+    documents: list[LotDocument] = Field(default_factory=list)
+    shared_documents: list[LotDocument] = Field(default_factory=list)

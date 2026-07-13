@@ -2,7 +2,8 @@
 name: TenderAI Design System
 source: Stitch project 15198750396004684153 — "TenderAI Procurement Dashboard"
 exported: 2026-07-07
-screens: 7 (6 UI screens + 1 design-system reference instance)
+updated: 2026-07-13
+screens: 9 (8 UI screens + 1 design-system reference instance)
 ---
 
 # TenderAI Design System
@@ -26,6 +27,10 @@ Exported from Stitch project `15198750396004684153`. The project contains **7 in
 | 5 | Анализ заказчика | Customer Analysis | UI screen | 2560×2048 |
 | 6 | Обзор рынка | Market Overview | UI screen | 2560×2048 |
 | 7 | *(design-system instance)* | Design System Reference | Non-UI asset | 960×540 |
+| 8 | Лот — Документация (top) | Lot Detail — Documentation tab, header state | UI screen | 2203×1180 |
+| 9 | Лот — Документация (scrolled) | Lot Detail — Documentation tab, scrolled state | UI screen | 2193×1183 |
+
+Screens 8–9 (added 2026-07-13, Stitch screen IDs `12770031540429706963` and `12770031540429705697`) are two scroll-states of the **Lot Detail page's Documentation tab**: lot title/classification/finance header, document checklist with AI-review status per file (Скачать / Скачать оригинал / Perplexity), a "documents from other lots with overlap" section, and a persistent right-hand **AI Assistant panel** ("Тендерный ИИ-Ассистент — Kapler AI") with chat history, quick-prompt chips, and a message composer. This AI-assistant side panel is new relative to screens 1–6 and should be treated as a shared layout element for lot-detail-style pages. Screenshots saved to `docs/stitch-screens/12770031540429706963.png` and `docs/stitch-screens/12770031540429705697.png`. No generated code was available from Stitch for these two screens (`htmlCode` was empty) — only the reference images.
 
 All 6 UI screens share one global sidebar navigation: Dashboard, Tenders, Analytics, Contracts, Compliance, Settings, plus Support/Logout — confirmed from screen content (dark mode toggle, notifications, admin avatar, "Add New Tender" primary action, search + filters, status-column layout: Корзина / В анализе / В работе / Завершено / Архив).
 

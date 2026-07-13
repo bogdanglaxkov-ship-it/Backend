@@ -22,6 +22,7 @@ from utils.error_handlers import register_validation_exception_handler
 
 from services.oylan import send_message, search_tenders_via_web
 from services.mcp_server import mcp as mcp_server_instance, mcp_asgi_app
+from services.lot_detail import build_lot_detail, build_lot_chat_context
 from tenderplan_sync import start_sync_worker, fetch_tender_details
 from shared_db import TenderDB
 from regions_data import REGION_MAPPING, normalize_region_name
@@ -98,6 +99,7 @@ class TenderCreate(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: str = 'default'
+    tender_id: Optional[str] = None
 
 class MarginInput(BaseModel):
     tender_price: float = 0
@@ -203,6 +205,23 @@ def _build_oylan_prompt(message: str, context: str, added_tender: dict | None) -
         f"Вопрос пользователя: {message}"
     )
 
+
+def _build_lot_prompt(message: str, context: str) -> str:
+    """Промпт для чата на странице конкретного лота. Отдельный от _build_oylan_prompt,
+    т.к. та инструкция написана под сайтовый поиск ('если подходящих тендеров в списке
+    нет...') и на фикс-контексте одного лота сбивает модель — она начинает переспрашивать,
+    какой лот имеется в виду, хотя он уже известен."""
+    return (
+        f"{context}\n\n"
+        "Инструкция: пользователь сейчас открыл именно этот лот на сайте TenderAI — "
+        "лот уже известен, НЕ спрашивай, какой лот имеется в виду. Отвечай на вопрос, "
+        "используя точные данные о лоте выше (маржа, прибыль, заказчик, конкуренция и т.д.). "
+        "Отвечай коротко и по делу, как в обычном чате: максимум 3-4 предложения, без заголовков "
+        "(##), без разделителей (---), без нумерованных и маркированных списков и без лишнего "
+        "форматирования markdown. Обычный текст, как будто пишешь человеку в мессенджере.\n\n"
+        f"Вопрос пользователя: {message}"
+    )
+
 # ─────────────────────────────────────────────
 #  БАЗОВЫЕ ЭНДПОИНТЫ И ЧАТ С ИИ
 # ─────────────────────────────────────────────
@@ -238,22 +257,32 @@ async def chat(req: ChatRequest, db_session: AsyncSession = Depends(get_db)):
         raise HTTPException(400, detail="Message cannot be empty")
     try:
         history = await get_history(req.session_id, db_session)
-        matched = _find_matching_tenders(req.message)
-        context = _build_site_context(matched)
 
         action = None
-        if _wants_add_to_lots(req.message) and matched:
-            top = matched[0]
-            action = {
-                "type": "add_lot",
-                "tender": {
-                    "id": top.get("id"),
-                    "title": top.get("title"),
-                    "tender_price": top.get("price") or 0,
-                },
-            }
+        lot = db.get_tender_by_id(req.tender_id) if req.tender_id else None
+        if lot:
+            # Чат на странице конкретного лота — контекст только по нему,
+            # а не по всей базе (иначе Oylan теряет фокус на вопросе про "этот лот").
+            context = build_lot_chat_context(build_lot_detail(lot))
+        else:
+            matched = _find_matching_tenders(req.message)
+            context = _build_site_context(matched)
+            if _wants_add_to_lots(req.message) and matched:
+                top = matched[0]
+                action = {
+                    "type": "add_lot",
+                    "tender": {
+                        "id": top.get("id"),
+                        "title": top.get("title"),
+                        "tender_price": top.get("price") or 0,
+                    },
+                }
 
-        prompt = _build_oylan_prompt(req.message, context, action["tender"] if action else None)
+        prompt = (
+            _build_lot_prompt(req.message, context)
+            if lot
+            else _build_oylan_prompt(req.message, context, action["tender"] if action else None)
+        )
         reply = await send_message(prompt, history)
         await save_message(req.session_id, "user", req.message, db_session)
         await save_message(req.session_id, "assistant", reply, db_session)
@@ -340,6 +369,49 @@ def get_tender(tender_id: str):
         raise HTTPException(404, "Тендер не найден")
     extra = fetch_tender_details(tender_id)
     return {**local, "extra_details": extra}
+
+@app.get("/api/tenders/{tender_id}/detail")
+def get_tender_detail(tender_id: str):
+    """Детальная карточка для страницы /tenders/{id}: классификация, заказчик,
+    финансы, документы. Реальные поля из TenderDB + детерминированные демо-данные
+    (см. services/lot_detail.py) для всего, чего в БД пока нет."""
+    local = db.get_tender_by_id(tender_id)
+    if not local:
+        raise HTTPException(404, "Тендер не найден")
+    return build_lot_detail(local)
+
+@app.get("/api/tenders/{tender_id}/documents/{doc_id}")
+def get_lot_document(tender_id: str, doc_id: str):
+    """Просмотр/скачивание документа лота. Реальных файлов закупки у нас нет —
+    отдаём читаемую заглушку с теми же именем/описанием, что показаны в списке,
+    чтобы кнопки «Смотреть»/«Скачать» не вели в 404."""
+    from fastapi.responses import PlainTextResponse
+
+    local = db.get_tender_by_id(tender_id)
+    if not local:
+        raise HTTPException(404, "Тендер не найден")
+    detail = build_lot_detail(local)
+    doc = next((d for d in detail.documents + detail.shared_documents if d.id == doc_id), None)
+    if not doc:
+        raise HTTPException(404, "Документ не найден")
+
+    content = (
+        f"{doc.name}\n{'=' * len(doc.name)}\n\n{doc.description}\n\n"
+        f"Лот: {detail.title}\nНомер лота: {detail.lot_number}\nЗаказчик: {detail.customer}\n\n"
+        "Это демо-документ TenderAI — реальный файл закупки недоступен в тестовой среде."
+    )
+    return PlainTextResponse(content, headers={"Content-Disposition": f'inline; filename="{doc.name}.txt"'})
+
+@app.get("/api/tenders/{tender_id}/related")
+def get_related_tenders(tender_id: str, limit: int = 5):
+    """Другие лоты той же вкладки — для таба «Другие лоты» на странице детали."""
+    local = db.get_tender_by_id(tender_id)
+    if not local:
+        raise HTTPException(404, "Тендер не найден")
+    source = local.get("source") or "goszakup"
+    all_tenders = db.get_all_tenders(source) or []
+    related = [t for t in all_tenders if t.get("id") != tender_id][:limit]
+    return {"items": related, "total_count": len(related)}
 
 # ─────────────────────────────────────────────
 #  ЖИВАЯ АНАЛИТИКА И ДИНАМИЧЕСКАЯ КАРТА
